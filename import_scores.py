@@ -24,6 +24,7 @@ from docx import Document
 from utils import (
     load_class_names, load_student_names, normalize_name,
     parse_score_header, find_class_in_text, extract_date_from_filename,
+    extract_column_header, find_date_columns,
     get_excel_path, get_output_dir
 )
 
@@ -230,11 +231,11 @@ def parse_word_doc(docx_path, class_names, student_cache):
 # ============================================================
 
 def find_or_create_date_column(ws, date_str):
-    """在 Sheet 的第一行查找日期列，若不存在则在最后一列右侧创建。"""
+    """在 Sheet 的第一行查找日期列（startswith 前缀匹配），若不存在则在最后一列右侧创建。"""
     # 扫描第一行
     for col_idx in range(3, ws.max_column + 1):
         cell_value = ws.cell(row=1, column=col_idx).value
-        if cell_value and str(cell_value).strip() == date_str:
+        if cell_value and str(cell_value).strip().startswith(date_str):
             return col_idx
 
     # 不存在，新建列
@@ -283,7 +284,7 @@ def write_scores_to_excel(excel_path, records, date_str):
         # 找到或创建日期列（已有列则清空重写）
         col = None
         for col_idx in range(3, ws.max_column + 1):
-            if str(ws.cell(row=1, column=col_idx).value or '').strip() == date_str:
+            if str(ws.cell(row=1, column=col_idx).value or '').strip().startswith(date_str):
                 col = col_idx
                 break
         if col is None:
@@ -369,7 +370,11 @@ def main():
 
     # 1. 提取日期
     date_str = extract_date_from_filename(docx_path)
+    # 尝试提取完整列头（如 "3.29清瓶乐"），优先使用完整列头写入 Excel
+    column_header = extract_column_header(docx_path)
     print(f"活动日期: {date_str}")
+    if column_header != date_str:
+        print(f"活动标题: {column_header}")
 
     # 2. 加载 Excel 和学生姓名缓存
     if excel_path is None:
@@ -412,10 +417,10 @@ def main():
         print(f"  {s}分: {score_dist[s]} 人")
     print()
 
-    # 4. 写入 Excel
+    # 4. 写入 Excel（使用完整列头）
     print("写入 Excel...")
     output_path, missing_students, total_written = write_scores_to_excel(
-        excel_path, records, date_str
+        excel_path, records, column_header
     )
 
     if output_path is None:

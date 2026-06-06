@@ -84,6 +84,80 @@ def extract_date_from_filename(filepath):
 
 
 # ============================================================
+# 日期列查找（startswith 匹配）
+# ============================================================
+
+def find_date_columns(ws, date_str):
+    """在 Sheet 第一行查找所有以 date_str 开头的日期列。
+
+    '3.29' → 匹配 '3.29清瓶乐'、'3.29扫雪' 等
+
+    Args:
+        ws: openpyxl Worksheet 对象
+        date_str: 日期前缀，如 '3.29'
+
+    Returns:
+        [(col_idx, header_value), ...] 按列号排序
+    """
+    matches = []
+    for col_idx in range(3, ws.max_column + 1):
+        cell_value = ws.cell(row=1, column=col_idx).value
+        if cell_value and str(cell_value).strip().startswith(date_str):
+            matches.append((col_idx, str(cell_value).strip()))
+    return matches
+
+
+def extract_date_prefix(text):
+    """从完整列头中提取纯日期前缀。
+
+    '3.29清瓶乐' → '3.29'
+    '12.15扫雪'  → '12.15'
+    '3.29'       → '3.29'
+    """
+    m = re.match(r'^(\d{1,2}\.\d{1,2})', text)
+    if m:
+        return m.group(1)
+    return text
+
+
+def extract_column_header(filepath):
+    """从文件名提取完整列头（日期+活动名）。
+
+    '3.29清瓶乐活动德育分统计.docx' → '3.29清瓶乐'
+    '12.15某某活动德育分统计.docx'  → '12.15某某'
+    '3.29活动德育分统计.docx'       → '3.29'
+    """
+    basename = os.path.basename(filepath)
+    basename = os.path.splitext(basename)[0]
+    # 匹配 "数字.数字" 到 "活动" 之间的部分
+    m = re.match(r'^(\d{1,2}\.\d{1,2}.*?)活动', basename)
+    if m:
+        return m.group(1).rstrip()
+    return basename
+
+
+def scan_excel_date_columns(excel_path, date_str):
+    """扫描 Excel 所有 Sheet，返回匹配 date_str 的列头集合（去重+排序）。
+
+    Returns:
+        list of str — 如 ['3.29清瓶乐', '3.29扫雪']
+    """
+    if not excel_path or not os.path.exists(excel_path):
+        return []
+    import openpyxl
+    wb = openpyxl.load_workbook(excel_path)
+    class_names = load_class_names(wb)
+    headers = set()
+    for cn in sorted(class_names):
+        ws = wb[cn]
+        cols = find_date_columns(ws, date_str)
+        for _, header in cols:
+            headers.add(header)
+    wb.close()
+    return sorted(headers)
+
+
+# ============================================================
 # 班级排序键
 # ============================================================
 

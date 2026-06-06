@@ -14,6 +14,8 @@ from tkinter import Toplevel, Text, Scrollbar, END, WORD, filedialog, messagebox
 import import_scores
 import generate_list
 
+from utils import scan_excel_date_columns
+
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(PROJECT_DIR, '文件模板')
 OUTPUT_DIR = os.path.join(PROJECT_DIR, '输出文件夹')
@@ -226,43 +228,81 @@ class DropdownMenu(ctk.CTkToplevel):
         cmd()
 
 
-# ── 生成名单测试弹窗 ──
+# ── 生成名单弹窗（含同日期多活动检测） ──
 
-class GenerateTestDialog(ctk.CTkToplevel):
-    def __init__(self, parent):
+class ColumnSelectDialog(ctk.CTkToplevel):
+    """扫描到同日期多活动列时，弹出选择窗口。"""
+
+    def __init__(self, parent, columns, callback):
         super().__init__(parent)
-        self.title("生成名单-测试")
-        self.geometry("580x180")
+        self.title("选择活动")
+        self.geometry("420x280")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
+        self.callback = callback
 
         self.update_idletasks()
         px, py = parent.winfo_x(), parent.winfo_y()
         pw, ph = parent.winfo_width(), parent.winfo_height()
-        w, h = 580, 180
+        w, h = 420, 280
         self.geometry(f"{w}x{h}+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
 
         ctk.CTkLabel(
-            self, text="⚠ 导入的表格文件必须为年级花名册数据表的过往版本，建议开发者使用",
-            font=ctk.CTkFont(size=12),
-            text_color="#E67E22",
+            self, text="检测到该日期的多个活动，请选择要生成名单的活动：",
+            font=ctk.CTkFont(size=13),
+            wraplength=380,
+        ).pack(anchor="w", padx=20, pady=(18, 12))
+
+        for col in columns:
+            btn = ctk.CTkButton(
+                self, text=col, anchor="w",
+                font=ctk.CTkFont(size=13),
+                fg_color="transparent",
+                text_color=("gray10", "gray90"),
+                hover_color=("gray70", "gray30"),
+                command=lambda c=col: self._select(c),
+            )
+            btn.pack(fill="x", padx=24, pady=(2, 2))
+
+        ctk.CTkButton(
+            self, text="取消", width=80,
+            fg_color="transparent", border_width=1,
+            command=self.destroy,
+        ).pack(pady=(14, 0))
+
+    def _select(self, column):
+        self.callback(column)
+        self.destroy()
+
+
+class GenerateDateDialog(ctk.CTkToplevel):
+    """生成前检测同日期多活动冲突：无冲突直接执行，有冲突弹窗选择。"""
+
+    def __init__(self, parent, excel_path, default_date=""):
+        super().__init__(parent)
+        self.title("生成名单")
+        self.geometry("500x180")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        self.excel_path = excel_path
+
+        self.update_idletasks()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        w, h = 500, 180
+        self.geometry(f"{w}x{h}+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+        ctk.CTkLabel(
+            self, text="生成名单（Excel → Word）",
+            font=ctk.CTkFont(size=14, weight="bold"),
         ).pack(anchor="w", padx=20, pady=(16, 10))
 
-        r1 = ctk.CTkFrame(self, fg_color="transparent")
-        r1.pack(fill="x", padx=20, pady=(0, 10))
-        ctk.CTkLabel(r1, text="Excel 文件:").pack(side="left")
-        self.excel_var = ctk.StringVar()
-        ctk.CTkEntry(r1, textvariable=self.excel_var, width=360).pack(side="left", padx=(10, 6))
-        ctk.CTkButton(
-            r1, text="浏览...", width=60,
-            command=self._browse,
-        ).pack(side="left")
-
         r2 = ctk.CTkFrame(self, fg_color="transparent")
-        r2.pack(fill="x", padx=20)
+        r2.pack(fill="x", padx=20, pady=(0, 8))
         ctk.CTkLabel(r2, text="活动日期:").pack(side="left")
-        self.date_var = ctk.StringVar()
+        self.date_var = ctk.StringVar(value=default_date)
         ctk.CTkEntry(r2, textvariable=self.date_var, width=110).pack(side="left", padx=(10, 0))
 
         ctk.CTkButton(
@@ -273,31 +313,40 @@ class GenerateTestDialog(ctk.CTkToplevel):
         self._status = ctk.CTkLabel(self, text="", text_color="gray")
         self._status.pack(pady=(4, 0))
 
-    def _browse(self):
-        path = filedialog.askopenfilename(
-            title="选择 Excel 文件",
-            initialdir=OUTPUT_DIR,
-            filetypes=[("Excel 文件", "*.xlsx")],
-        )
-        if path:
-            self.excel_var.set(path)
-
     def _run(self):
-        path = self.excel_var.get().strip()
-        if not path:
-            messagebox.showwarning("提示", "请先选择 Excel 文件。", parent=self)
-            return
-        if not os.path.exists(path):
-            messagebox.showerror("错误", f"文件不存在:\n{path}", parent=self)
-            return
-
         date_str = self.date_var.get().strip()
         if not date_str:
             messagebox.showwarning("提示", "请输入活动日期。", parent=self)
             return
 
-        self._status.configure(text="生成已启动（查看弹出的 cmd 窗口）")
-        run_in_console('generate', date_str, '--excel', path)
+        self._status.configure(text="正在检测...")
+        self.update_idletasks()
+
+        columns = scan_excel_date_columns(self.excel_path, date_str)
+
+        if len(columns) == 0:
+            messagebox.showerror(
+                "错误",
+                f"未在 Excel 中找到日期 '{date_str}' 的加分数据。",
+                parent=self,
+            )
+            self._status.configure(text="")
+            return
+
+        if len(columns) == 1:
+            self._execute_generate(date_str)
+            return
+
+        # 多活动冲突 — 弹出选择窗口
+        self._status.configure(text="")
+        ColumnSelectDialog(
+            self, columns,
+            callback=lambda col: self._execute_generate(col),
+        )
+
+    def _execute_generate(self, resolved_date_str):
+        self._status.configure(text="生成已启动（查看弹出的窗口）")
+        run_in_console('generate', resolved_date_str, '--excel', self.excel_path)
 
 
 # ── 主窗口 ──
@@ -330,10 +379,10 @@ class App(ctk.CTk):
         ).pack(side="right", padx=(2, 10), pady=3)
 
         ctk.CTkButton(
-            menubar, text="最近文件", width=90, height=30,
+            menubar, text="导入名单", width=90, height=30,
             fg_color="transparent", border_width=1,
-            command=self._open_recent,
-        ).pack(side="right", padx=2, pady=3)
+            command=self._open_import,
+        ).pack(side="right", padx=(2, 10), pady=3)
 
         # ── 生成名单区域 ──
         gen_frame = ctk.CTkFrame(self)
@@ -389,14 +438,24 @@ class App(ctk.CTk):
         y = self.winfo_y() + 42
         DropdownMenu(self, [
             ("导入分数", self._open_import),
-            ("生成名单-测试", self._open_generate_test),
+            ("还原默认文件", self._reset_defaults),
         ], x, y)
 
     def _open_import(self):
         ImportDialog(self)
 
     def _open_generate_test(self):
-        GenerateTestDialog(self)
+        GenerateDateDialog(self, self.excel_path_var.get().strip() or
+                          os.path.join(OUTPUT_DIR, '年级花名册数据表_updated.xlsx'))
+
+    def _reset_defaults(self):
+        """还原默认 Excel 文件为年级花名册数据表.xlsx"""
+        default = os.path.join(PROJECT_DIR, '年级花名册数据表.xlsx')
+        if os.path.exists(default):
+            self.excel_path_var.set(default)
+            self.status_var.set("已还原为默认文件")
+        else:
+            messagebox.showwarning("提示", "默认文件不存在:\n" + default)
 
     # ── 文件浏览 ──
 
@@ -429,9 +488,34 @@ class App(ctk.CTk):
             messagebox.showwarning("提示", "请输入活动日期。")
             return
 
+        self.status_var.set("正在检测...")
+        self.update_idletasks()
+
+        # 扫描同日期多活动
+        columns = scan_excel_date_columns(path, date_str)
+
+        if len(columns) == 0:
+            messagebox.showerror("错误", f"未在 Excel 中找到日期 '{date_str}' 的加分数据。")
+            self.status_var.set("就绪")
+            return
+
+        if len(columns) == 1:
+            self.status_var.set("正在生成名单...")
+            run_in_console('generate', date_str, '--excel', path)
+            self.status_var.set("生成已启动（查看弹出的窗口）")
+            return
+
+        # 多活动冲突 — 弹出选择窗口
+        self.status_var.set("就绪")
+        ColumnSelectDialog(
+            self, columns,
+            callback=lambda col: self._execute_generate_with_column(path, col),
+        )
+
+    def _execute_generate_with_column(self, path, column):
         self.status_var.set("正在生成名单...")
-        run_in_console('generate', date_str, '--excel', path)
-        self.status_var.set("生成已启动（查看弹出的 cmd 窗口）")
+        run_in_console('generate', column, '--excel', path)
+        self.status_var.set("生成已启动（查看弹出的窗口）")
 
     # ── 快捷操作 ──
 
